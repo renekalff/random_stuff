@@ -1,0 +1,168 @@
+diff -crB eventmachine/ext/cmain.cpp eventmachine_modded/ext/cmain.cpp
+*** eventmachine/ext/cmain.cpp	2011-07-26 11:23:11.000000000 +0200
+--- eventmachine_modded/ext/cmain.cpp	2011-07-07 14:13:34.000000000 +0200
+***************
+*** 99,104 ****
+--- 99,109 ----
+  	return EventMachine->InstallOneshotTimer (seconds);
+  }
+  
++ extern "C" const unsigned long evma_install_epoch_timer (unsigned long epoch_milliseconds)
++ {
++ 	ensure_eventmachine("evma_install_epoch_timer");
++ 	return EventMachine->InstallEpochTimer (epoch_milliseconds);
++ }
+  
+  /**********************
+  evma_connect_to_server
+diff -crB eventmachine/ext/em.cpp eventmachine_modded/ext/em.cpp
+*** eventmachine/ext/em.cpp	2011-07-26 11:23:11.000000000 +0200
+--- eventmachine_modded/ext/em.cpp	2011-07-07 14:15:25.000000000 +0200
+***************
+*** 1055,1060 ****
+--- 1058,1079 ----
+  	return i->second.GetBinding();
+  }
+  
++ const unsigned long EventMachine_t::InstallEpochTimer (unsigned long epoch_milliseconds)
++ {
++   if (Timers.size() > MaxOutstandingTimers)
++ 		return false;
++ 	
++   uint64_t fire_at = ((uint64_t)epoch_milliseconds) * 1000LL;
++ 
++ 	Timer_t t;
++ 	#ifndef HAVE_MAKE_PAIR
++ 	multimap<uint64_t,Timer_t>::iterator i = Timers.insert (multimap<uint64_t,Timer_t>::value_type (fire_at, t));
++ 	#else
++ 	multimap<uint64_t,Timer_t>::iterator i = Timers.insert (make_pair (fire_at, t));
++ 	#endif
++ 	return i->second.GetBinding();
++ }
++ 
+  
+  /*******************************
+  EventMachine_t::ConnectToServer
+diff -crB eventmachine/ext/em.h eventmachine_modded/ext/em.h
+*** eventmachine/ext/em.h	2011-07-26 11:23:11.000000000 +0200
+--- eventmachine_modded/ext/em.h	2011-07-07 14:15:32.000000000 +0200
+***************
+*** 69,74 ****
+--- 69,75 ----
+  		void ScheduleHalt();
+  		void SignalLoopBreaker();
+  		const unsigned long InstallOneshotTimer (int);
++ 		const unsigned long InstallEpochTimer (unsigned long);
+  		const unsigned long ConnectToServer (const char *, int, const char *, int);
+  		const unsigned long ConnectToUnixServer (const char *);
+  
+diff -crB eventmachine/ext/eventmachine.h eventmachine_modded/ext/eventmachine.h
+*** eventmachine/ext/eventmachine.h	2011-07-26 11:23:11.000000000 +0200
+--- eventmachine_modded/ext/eventmachine.h	2011-07-07 14:13:20.000000000 +0200
+***************
+*** 44,49 ****
+--- 44,50 ----
+  	void evma_run_machine();
+  	void evma_release_library();
+  	const unsigned long evma_install_oneshot_timer (int seconds);
++ 	const unsigned long evma_install_epoch_timer (unsigned long epoch_milliseconds);
+  	const unsigned long evma_connect_to_server (const char *bind_addr, int bind_port, const char *server, int port);
+  	const unsigned long evma_connect_to_unix_server (const char *server);
+  
+diff -crB eventmachine/ext/rubymain.cpp eventmachine_modded/ext/rubymain.cpp
+*** eventmachine/ext/rubymain.cpp	2011-07-26 11:23:11.000000000 +0200
+--- eventmachine_modded/ext/rubymain.cpp	2011-07-07 14:12:56.000000000 +0200
+***************
+*** 237,242 ****
+--- 237,250 ----
+  	return ULONG2NUM (f);
+  }
+  
++ static VALUE t_add_epoch_timer (VALUE self, VALUE epoch_milliseconds)
++ {
++ 	const unsigned long f = evma_install_epoch_timer (FIX2ULONG (epoch_milliseconds));
++ 	if (!f)
++ 		rb_raise (rb_eRuntimeError, "ran out of timers; use #set_max_timers to increase limit");
++ 	return ULONG2NUM (f);
++ }
++ 
+  
+  /**************
+  t_start_server
+***************
+*** 1116,1121 ****
+--- 1124,1130 ----
+  	rb_define_module_function (EmModule, "run_machine", (VALUE(*)(...))t_run_machine_without_threads, 0);
+  	rb_define_module_function (EmModule, "run_machine_without_threads", (VALUE(*)(...))t_run_machine_without_threads, 0);
+  	rb_define_module_function (EmModule, "add_oneshot_timer", (VALUE(*)(...))t_add_oneshot_timer, 1);
++ 	rb_define_module_function (EmModule, "add_epoch_timer", (VALUE(*)(...))t_add_epoch_timer, 1);
+  	rb_define_module_function (EmModule, "start_tcp_server", (VALUE(*)(...))t_start_server, 2);
+  	rb_define_module_function (EmModule, "stop_tcp_server", (VALUE(*)(...))t_stop_server, 1);
+  	rb_define_module_function (EmModule, "start_unix_server", (VALUE(*)(...))t_start_unix_server, 1);
+diff -crB eventmachine/lib/em/timers.rb eventmachine_modded/lib/em/timers.rb
+*** eventmachine/lib/em/timers.rb	2011-07-26 11:23:11.000000000 +0200
+--- eventmachine_modded/lib/em/timers.rb	2011-07-07 14:31:50.000000000 +0200
+***************
+*** 55,58 ****
+--- 55,90 ----
+        end
+      end
+    end
++   
++   class PeriodicClockTimer
++     # Create a new periodic timer that executes every interval seconds
++     def initialize interval, callback=nil, &block
++       @interval = interval
++       @code = callback || block
++       @cancelled = false
++       @work = method(:fire)
++       schedule
++     end
++ 
++     # Cancel the periodic timer
++     def cancel
++       @cancelled = true
++     end
++ 
++     # Fire the timer every interval seconds
++     attr_accessor :interval
++ 
++     def schedule # :nodoc:
++       epoch_seconds = Time.now.to_i
++       next_interval = epoch_seconds + (@interval - (epoch_seconds % @interval))
++       EventMachine::add_etimer next_interval, @work
++     end
++     
++     def fire # :nodoc:
++       unless @cancelled
++         schedule
++         @code.call
++       end
++     end
++   end
+  end
+diff -crB eventmachine/lib/eventmachine.rb eventmachine_modded/lib/eventmachine.rb
+*** eventmachine/lib/eventmachine.rb	2011-07-26 11:23:11.000000000 +0200
+--- eventmachine_modded/lib/eventmachine.rb	2011-07-07 13:54:12.000000000 +0200
+***************
+*** 313,318 ****
+--- 313,329 ----
+        s
+      end
+    end
++   
++   def self.add_etimer *args, &block
++     epoch_seconds = args.shift
++     code = args.shift || block
++     if code
++       # check too many timers!
++       s = add_epoch_timer((epoch_seconds.to_f * 1000).to_i)
++       @timers[s] = code
++       s
++     end
++   end
+  
+    # Adds a periodic timer to the event loop.
+    # It takes the same parameters as the one-shot timer method, {EventMachine.add_timer}.
+Only in eventmachine_modded/lib: fastfilereaderext.bundle
+Only in eventmachine_modded/lib: rubyeventmachine.bundle

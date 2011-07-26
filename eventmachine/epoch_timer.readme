@@ -1,0 +1,31 @@
+I've written a patch that will let you create a timer that fires at 
+more specific intervals, ideal for storing data in RRD files for 
+example. As an example: 
+
+# Fire every 5 minutes 
+EM.run do 
+EM::PeriodicClockTimer.new(300) { puts Time.now } 
+end
+ 
+> 2011-07-26 12:25:00 +0200 
+> 2011-07-26 12:30:00 +0200 
+> 2011-07-26 12:35:00 +0200 
+> 2011-07-26 12:40:00 +0200 
+
+
+You can also create a time which fires at a specific epoch: 
+# Fire at 2011-07-26 12:44:28 
+EM.run do 
+EM.add_etimer(1311677068) { puts Time.now } 
+end 
+
+> 2011-07-26 12:44:28 +0200 
+
+
+As you can specify the exact epoch at which the timer should fire, 
+multiple timers with are scheduled to fire at the same epoch (either 
+trough add_etimer or by using PeriodicClockTimer) will fire in the 
+same tick. This way you can combine data from multiple timers and 
+process that in the next tick. Of-course there is no guarantee that 
+the timer will fire at the exact second specified, only that timers 
+with the same epoch will fire in the same tick.
