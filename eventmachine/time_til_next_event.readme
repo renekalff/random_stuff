@@ -1,0 +1,45 @@
+Consider the following: 
+
+EM.run do 
+  3.times do |x| 
+     sleep(2) 
+     puts "Adding a timer on #{Time.now}" 
+     EM.add_timer(10) { puts "Timer #{x} fired: #{Time.now}" } 
+   end 
+end 
+
+> Adding a timer on 2011-07-26 20:57:11 
+> Adding a timer on 2011-07-26 20:57:13 
+> Adding a timer on 2011-07-26 20:57:15 
+> Timer 0 fired: 2011-07-26 20:57:27 
+> Timer 1 fired: 2011-07-26 20:57:27 
+> Timer 2 fired: 2011-07-26 20:57:27 
+
+What happened here? All three timers fired 10 seconds after the last 
+added event! Now have a look at the following code: 
+
+EM.run do 
+  EM.add_periodic_timer(1) do {} 
+  3.times do |x| 
+     sleep(2) 
+     puts "Adding a timer on #{Time.now}" 
+     EM.add_timer(10) { puts "Timer #{x} fired: #{Time.now}" } 
+   end 
+end 
+
+> Adding a timer on 2011-07-26 21:00:37 
+> Adding a timer on 2011-07-26 21:00:39 
+> Adding a timer on 2011-07-26 21:00:41 
+> Timer 0 fired: 2011-07-26 21:00:47 
+> Timer 1 fired: 2011-07-26 21:00:49 
+> Timer 2 fired: 2011-07-26 21:00:51 
+
+Now the timers behaved normally. This is because the periodic timer 
+made sure that the reaction couldn't oversleep (I should have one of 
+those beside my bed). The problem turned out to be that 
+EventMachine_t::_TimeTilNextEvent() calculates the time to the next 
+event based on MyCurrentLoopTime, which is the time at the beginning 
+of the iteration. But the calculation is done at the end of the 
+iteration, and so the time in between is lost. 
+
+This patch replaces MyCurrentLoopTime by GetRealTime. 

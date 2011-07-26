@@ -1,0 +1,32 @@
+diff -crB eventmachine/ext/em.cpp eventmachine_patched/ext/em.cpp
+*** eventmachine/ext/em.cpp	2011-07-26 22:01:50.000000000 +0200
+--- eventmachine_patched/ext/em.cpp	2011-07-26 22:04:53.000000000 +0200
+***************
+*** 674,679 ****
+--- 674,680 ----
+  timeval EventMachine_t::_TimeTilNextEvent()
+  {
+  	uint64_t next_event = 0;
++   uint64_t current_time = GetRealTime();
+  
+  	if (!Heartbeats.empty()) {
+  		multimap<uint64_t,EventableDescriptor*>::iterator heartbeats = Heartbeats.begin();
+***************
+*** 695,702 ****
+  	if (next_event == 0) {
+  		tv = Quantum;
+  	} else {
+! 		if (next_event > MyCurrentLoopTime) {
+! 			uint64_t duration = next_event - MyCurrentLoopTime;
+  			tv.tv_sec = duration / 1000000;
+  			tv.tv_usec = duration % 1000000;
+  		} else {
+--- 696,703 ----
+  	if (next_event == 0) {
+  		tv = Quantum;
+  	} else {
+! 		if (next_event > current_time) {
+! 			uint64_t duration = next_event - current_time;
+  			tv.tv_sec = duration / 1000000;
+  			tv.tv_usec = duration % 1000000;
+  		} else {
